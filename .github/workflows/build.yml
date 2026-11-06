@@ -1,0 +1,43 @@
+name: Gerar instalador Windows
+
+on:
+  workflow_dispatch:        # permite rodar manualmente na aba Actions
+  push:
+    branches: [main]        # roda sozinho a cada envio de arquivos
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Gerar o programa (PyInstaller)
+        run: python -m PyInstaller --noconfirm --windowed --name ColegiadoDemandas --collect-data docx --collect-data openpyxl main.py
+
+      - name: Instalar o Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Gerar o instalador
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+
+      - name: Guardar o instalador para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Instalador_ColegiadoDemandas
+          path: installer/Instalador_ColegiadoDemandas.exe
+
+      - name: Publicar em Releases (somente em tags v*)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Instalador_ColegiadoDemandas.exe
