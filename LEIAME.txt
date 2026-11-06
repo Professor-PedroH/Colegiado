@@ -1,0 +1,20 @@
+COLEGIADO - CONTROLE DE DEMANDAS
+
+COMO USAR SEM INSTALAR (teste rapido)
+1. Instale o Python 3.10+ (python.org) marcando "Add Python to PATH".
+2. Abra o Prompt de Comando nesta pasta e rode:  pip install -r requirements.txt
+3. Rode:  python main.py
+
+COMO GERAR O PROGRAMA INSTALAVEL
+1. De dois cliques em build.bat (gera dist\ColegiadoDemandas\ColegiadoDemandas.exe).
+2. Instale o Inno Setup (gratuito), abra installer.iss e clique em Compile.
+   O arquivo installer\Instalador_ColegiadoDemandas.exe e o instalador para distribuir.
+
+ONDE FICAM OS DADOS
+- Base de dados: %APPDATA%\ColegiadoDemandas\colegiado.db (nao e apagada ao atualizar/desinstalar)
+- Historico de alteracoes (log): %APPDATA%\ColegiadoDemandas\historico.log
+- Backups automaticos (ao fechar o programa; guarda os 20 ultimos):
+  Documentos\ColegiadoDemandas\Backups
+- Menu Backup > Exportar/Importar: arquivo .json com todos os dados e o log.
+  Tambem ha "Importar backup" na tela inicial (escolha do curso).
+  Dica: deixe a pasta Documentos sincronizada (OneDrive) para ter copia na nuvem.
