@@ -22,7 +22,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Gerar o programa (PyInstaller)
-        run: python -m PyInstaller --noconfirm --windowed --name ColegiadoDemandas --icon assets/icon.ico --add-data "assets;assets" --collect-data docx --collect-data openpyxl main.py
+        run: python -m PyInstaller --noconfirm --windowed --name ColegiadoDemandas --icon assets/icon.ico --add-data "assets;assets" --collect-data docx --collect-data openpyxl --collect-all reportlab main.py
 
       - name: Instalar o Inno Setup
         run: choco install innosetup -y --no-progress
