@@ -13,13 +13,15 @@ COMO GERAR O PROGRAMA INSTALAVEL
 ONDE FICAM OS DADOS
 - Base de dados: %APPDATA%\ColegiadoDemandas\colegiado.db (nao e apagada ao atualizar/desinstalar)
 - Historico de alteracoes (log): %APPDATA%\ColegiadoDemandas\historico.log
-- Backups automaticos (ao fechar o programa; guarda os 20 ultimos):
+- Documentos anexados as reunioes: %APPDATA%\ColegiadoDemandas\anexos
+- Backups automaticos (ao fechar o programa; guarda os 10 ultimos; incluem os anexos):
   Documentos\ColegiadoDemandas\Backups
-- Menu Backup > Exportar/Importar: arquivo .json com todos os dados e o log.
+- Menu Backup > Exportar: arquivo .zip com todos os dados, o log e os documentos anexos
+  (backup completo, ou somente o curso atual). Importar em outro computador traz tudo junto.
   Tambem ha "Importar backup" na tela inicial (escolha do curso).
   Dica: deixe a pasta Documentos sincronizada (OneDrive) para ter copia na nuvem.
 
 LOGO
 - Para usar a logo da sua instituicao, substitua assets\logo.png (PNG quadrado, ex.: 512x512)
   e assets\icon.ico (icone do programa; gere em um conversor de PNG para ICO) e refaca o build.
-- O nome do coordenador pode ser alterado em Arquivo > Alterar nome do coordenador.
+- O(a) coordenador(a) de cada curso se cadastra em Arquivo > Dados do curso.

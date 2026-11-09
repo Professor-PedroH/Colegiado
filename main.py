@@ -30,7 +30,7 @@ def main():
     theme.set_theme(db.cfg("tema", "claro"))
     app.setStyleSheet(theme.qss())
     app.setWindowIcon(QIcon(theme.asset("icon.ico")))
-    splash = criar_splash(db.coordenador())
+    splash = criar_splash()
     aguardar(1500)
     first = True
     while True:
