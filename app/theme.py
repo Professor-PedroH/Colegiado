@@ -49,9 +49,27 @@ def _check_icon():
     return path.as_posix()
 
 
+def _arrow_icon(sentido):
+    path = Path(tempfile.gettempdir()) / f"colegiado_{sentido}_{P['nome']}.png"
+    pm = QPixmap(16, 16)
+    pm.fill(Qt.GlobalColor.transparent)
+    qp = QPainter(pm)
+    qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(P["muted"]), 2)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    qp.setPen(pen)
+    y1, y2 = (5, 10) if sentido == "down" else (10, 5)
+    qp.drawPolyline([QPointF(3.5, y1), QPointF(8, y2), QPointF(12.5, y1)])
+    qp.end()
+    pm.save(str(path))
+    return path.as_posix()
+
+
 def qss():
     p = P
     chk = _check_icon()
+    down, up = _arrow_icon("down"), _arrow_icon("up")
     return f"""
 * {{ font-family: 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif; font-size: 10pt; }}
 QWidget {{ background: {p['bg']}; color: {p['text']}; }}
@@ -64,7 +82,11 @@ QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QDateEdit, QTimeEdit, QSpinBox 
 QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QDateEdit:focus, QTimeEdit:focus {{ border: 1px solid {p['accent']}; }}
 QComboBox QAbstractItemView {{ background: {p['card']}; border: 1px solid {p['border']};
   selection-background-color: {p['sel']}; selection-color: {p['text']}; }}
-QComboBox::drop-down, QDateEdit::drop-down {{ border: none; width: 22px; }}
+QComboBox::drop-down, QDateEdit::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right; border: none; width: 24px; }}
+QComboBox::down-arrow, QDateEdit::down-arrow {{ image: url({down}); width: 14px; height: 14px; }}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 20px; border: none; background: transparent; }}
+QAbstractSpinBox::up-arrow {{ image: url({up}); width: 12px; height: 12px; }}
+QAbstractSpinBox::down-arrow {{ image: url({down}); width: 12px; height: 12px; }}
 QPushButton {{ background: {p['card']}; border: 1px solid {p['border']}; border-radius: 6px; padding: 6px 14px; }}
 QPushButton:hover {{ background: {p['sel']}; }}
 QPushButton:disabled {{ color: {p['muted']}; }}
@@ -75,6 +97,7 @@ QPushButton:checked {{ background: {p['accent']}; color: {p['on_accent']}; borde
 QTableWidget, QListWidget {{ background: {p['card']}; alternate-background-color: {p['alt']}; border: 1px solid {p['border']};
   border-radius: 8px; gridline-color: {p['border']}; selection-background-color: {p['sel']}; selection-color: {p['text']}; outline: 0; }}
 QTableWidget::item {{ padding: 4px 6px; }}
+QListWidget::item {{ padding: 4px 8px; }}
 QHeaderView::section {{ background: {p['alt']}; color: {p['muted']}; border: none; border-bottom: 1px solid {p['border']};
   padding: 6px; font-weight: 600; }}
 QTableCornerButton::section {{ background: {p['alt']}; border: none; }}

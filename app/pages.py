@@ -1,9 +1,7 @@
 """Páginas da janela principal."""
 import datetime as dt
-from urllib.parse import quote
-
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
                                QHeaderView, QLabel, QLineEdit, QPushButton, QSplitter, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
@@ -251,7 +249,7 @@ class DemandasPage(QWidget):
         st, pr = self.f_status.currentIndex(), self.f_prio.currentText()
         out = []
         for d in rows:
-            if txt and txt not in " ".join((d["titulo"], d["descricao"] or "", d["resp"], d["pautas"])).lower():
+            if txt and txt not in " ".join((d["titulo"], d["descricao"] or "", d["resp"], d["pautas"], d["sei"] or "")).lower():
                 continue
             if resp == "coord" and not d["coord"]:
                 continue
@@ -309,9 +307,10 @@ class ReunioesPage(QWidget):
         top = QHBoxLayout()
         top.addWidget(titulo("Reuniões"))
         top.addStretch()
+        top.addWidget(botao("Relatório em PDF…", mw.relatorio))
         top.addWidget(botao("+ Nova reunião", lambda: mw.editar_reuniao(None), True))
         lay.addLayout(top)
-        self.t = tabela(["Data", "Horário", "Tipo", "Local", "Situação", "Pautas", "Demandas"], stretch=3)
+        self.t = tabela(["Data", "Horário", "Ata nº", "Tipo", "Local", "Situação", "Pautas", "Demandas", "Anexos"], stretch=4)
         self.t.cellDoubleClicked.connect(lambda *_: self.abrir())
         lay.addWidget(self.t, 1)
         bot = QHBoxLayout()
@@ -329,8 +328,12 @@ class ReunioesPage(QWidget):
             self.t.insertRow(i)
             np_ = db.one("SELECT COUNT(*) n FROM pauta WHERE reuniao_id=?", (r["id"],))["n"]
             nd = db.one("SELECT COUNT(*) n FROM demanda WHERE reuniao_id=?", (r["id"],))["n"]
-            cor = p["muted"] if r["status"] == "Cancelada" else None
-            vals = (br(r["data"]), r["hora"], r["tipo"], r["local"], r["status"], str(np_), str(nd))
+            na = db.one("SELECT COUNT(*) n FROM anexo WHERE reuniao_id=?", (r["id"],))["n"]
+            passou = r["status"] == "Agendada" and r["data"] < iso(dt.date.today())
+            cor = p["muted"] if r["status"] == "Cancelada" else (p["soon"] if passou else None)
+            situacao = "Agendada (já passou)" if passou else r["status"]
+            ata = f"{r['numero']}/{r['data'][:4]}" if r["numero"] else "—"
+            vals = (br(r["data"]), r["hora"], ata, r["tipo"], r["local"], situacao, str(np_), str(nd), str(na))
             for c, v in enumerate(vals):
                 self.t.setItem(i, c, item(v, r["id"] if c == 0 else None, cor))
 
@@ -433,7 +436,6 @@ class PessoasPage(QWidget):
         lay.addWidget(self.t, 1)
         bot = QHBoxLayout()
         bot.addWidget(botao("Editar", self.editar))
-        bot.addWidget(botao("Cobrar demandas por e-mail", self.cobrar))
         bot.addWidget(botao("Excluir", self.excluir, danger=True))
         bot.addStretch()
         lay.addLayout(bot)
@@ -471,18 +473,3 @@ class PessoasPage(QWidget):
                                "(Para apenas ocultá-la, desmarque \"Ativo no curso\".)"):
             self.mw.db.excluir_pessoa(i)
             self.mw.refresh_all()
-
-    def cobrar(self):
-        i = selecionado(self.t)
-        if not i:
-            return aviso(self, "Selecione uma pessoa.")
-        db = self.mw.db
-        pes = db.one("SELECT * FROM pessoa WHERE id=?", (i,))
-        pend = [d for d in db.demandas(self.mw.curso_id) if i in d["resp_ids"]]
-        if not pend:
-            return aviso(self, f"{pes['nome']} não tem demandas em aberto.")
-        linhas = "\n".join(f"- {d['titulo']} (prazo: {br(d['prazo'])})" for d in pend)
-        corpo = (f"Prezado(a) {pes['nome']},\n\nSegue a relação de demandas do Colegiado sob sua responsabilidade:\n\n"
-                 f"{linhas}\n\nAtenciosamente,\n{db.coordenador()}\nCoordenador do Curso de {self.mw.curso_nome}")
-        url = f"mailto:{pes['email'] or ''}?subject={quote('Demandas pendentes – Colegiado')}&body={quote(corpo)}"
-        QDesktopServices.openUrl(QUrl(url))

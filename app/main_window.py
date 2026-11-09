@@ -1,14 +1,17 @@
 """Janela principal: navegação, menus, backup e tema."""
 import datetime as dt
+import re
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QPixmap
-from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QListWidget, QMainWindow,
-                               QInputDialog, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView)
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QListWidget,
+                               QMainWindow, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import theme
 from .db import backup_dir, br, parse
-from .dialogs import DemandaDialog, ReuniaoDialog, abrir_arquivo, aviso, confirm, botoes
+from .dialogs import (CursoDadosDialog, DemandaDialog, RelatorioDialog, ReuniaoDialog, abrir_arquivo, aviso, botoes,
+                      importar_backup_ui)
+from .info import APP_NOME, AUTOR, VERSAO
 from .pages import DemandasPage, HomePage, PautaFuturaPage, PessoasPage, ReunioesPage
 
 
@@ -17,7 +20,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.db, self.curso_id, self.curso_nome = db, curso_id, curso_nome
         self.trocar = False
-        self.setWindowTitle(f"Colegiado – {curso_nome}")
         self.setWindowIcon(QIcon(theme.asset("icon.ico")))
         self.resize(1320, 820)
 
@@ -34,20 +36,23 @@ class MainWindow(QMainWindow):
                                                                Qt.TransformationMode.SmoothTransformation))
         logo.setContentsMargins(18, 16, 0, 0)
         sv.addWidget(logo)
-        marca = QLabel(f"<span style='font-family:Georgia,serif; font-size:15pt;'>{curso_nome}</span>"
-                       f"<br><span style='color:#83827D;'>Colegiado do Curso</span>")
-        marca.setWordWrap(True)
-        marca.setContentsMargins(18, 8, 12, 6)
-        sv.addWidget(marca)
+        self.marca = QLabel()
+        self.marca.setWordWrap(True)
+        self.marca.setContentsMargins(18, 8, 12, 2)
+        sv.addWidget(self.marca)
+        self.coord_lbl = QLabel()
+        self.coord_lbl.setWordWrap(True)
+        self.coord_lbl.setContentsMargins(18, 0, 12, 8)
+        sv.addWidget(self.coord_lbl)
         self.nav = QListWidget()
         self.nav.setObjectName("nav")
         self.nav.addItems(["Início", "Demandas", "Reuniões", "Próximas pautas", "Pessoas"])
         sv.addWidget(self.nav, 1)
-        self.rodape = QLabel()
-        self.rodape.setWordWrap(True)
-        self.rodape.setContentsMargins(18, 8, 12, 14)
-        sv.addWidget(self.rodape)
-        self.atualiza_rodape()
+        rodape = QLabel(f"<span style='color:#83827D; font-size:8pt;'>Desenvolvido por</span><br>"
+                        f"<span style='font-size:9pt;'>{AUTOR}</span>")
+        rodape.setWordWrap(True)
+        rodape.setContentsMargins(18, 8, 12, 14)
+        sv.addWidget(rodape)
         h.addWidget(side)
         self.stack = QStackedWidget()
         self.pages = [HomePage(self), DemandasPage(self), ReunioesPage(self), PautaFuturaPage(self), PessoasPage(self)]
@@ -58,25 +63,20 @@ class MainWindow(QMainWindow):
         self.nav.currentRowChanged.connect(self._nav)
         self.nav.setCurrentRow(0)
         self._menus()
+        self.atualiza_cabecalho()
         self.refresh_all()
         QTimer.singleShot(400, self.resumo)
 
-    def atualiza_rodape(self):
-        self.rodape.setText(f"<span style='color:#83827D; font-size:8pt;'>Coordenador do Curso</span><br>"
-                            f"<span style='font-size:9pt;'>{self.db.coordenador()}</span>")
-
-    def alterar_coordenador(self):
-        dlg = QInputDialog(self)
-        dlg.setWindowTitle("Coordenador do curso")
-        dlg.setLabelText("Nome do coordenador (aparece no programa, na ata e nos e-mails):")
-        dlg.setTextValue(self.db.coordenador())
-        dlg.setOkButtonText("Salvar")
-        dlg.setCancelButtonText("Cancelar")
-        dlg.resize(520, 140)
-        if dlg.exec() and dlg.textValue().strip():
-            self.db.set_cfg("coordenador", dlg.textValue().strip())
-            self.db.log("Coordenador alterado", dlg.textValue().strip())
-            self.atualiza_rodape()
+    def atualiza_cabecalho(self):
+        c = self.db.curso(self.curso_id)
+        self.curso_nome = c["nome"]
+        self.setWindowTitle(f"Colegiado – {self.curso_nome}")
+        self.marca.setText(f"<span style='font-family:Georgia,serif; font-size:15pt;'>{self.curso_nome}</span>"
+                           f"<br><span style='color:#83827D;'>Colegiado do Curso</span>")
+        coord = (c.get("coordenador") or "").strip()
+        self.coord_lbl.setText(f"<span style='color:#83827D; font-size:8pt;'>{c.get('tratamento') or 'Coordenador'}</span>"
+                               f"<br><span style='font-size:9pt;'>{coord}</span>" if coord else "")
+        self.coord_lbl.setVisible(bool(coord))
 
     def _nav(self, i):
         self.stack.setCurrentIndex(i)
@@ -85,18 +85,23 @@ class MainWindow(QMainWindow):
     def _menus(self):
         mb = self.menuBar()
         m = mb.addMenu("Arquivo")
+        self._act(m, "Dados do curso (coordenador(a), nome)…", self.dados_curso)
         self._act(m, "Trocar de curso", self._trocar)
-        self._act(m, "Alterar nome do coordenador…", self.alterar_coordenador)
         m.addSeparator()
         self._act(m, "Sair", self.close)
+        m = mb.addMenu("Relatórios")
+        self._act(m, "Relatório do período em PDF…", self.relatorio)
         m = mb.addMenu("Backup")
-        self._act(m, "Exportar backup…", self.exportar)
+        self._act(m, "Exportar backup completo (todos os cursos)…", lambda: self.exportar(False))
+        self._act(m, "Exportar somente este curso…", lambda: self.exportar(True))
         self._act(m, "Importar backup…", self.importar)
         self._act(m, "Abrir pasta dos backups automáticos", lambda: abrir_arquivo(backup_dir()))
         m.addSeparator()
         self._act(m, "Histórico de alterações", self.historico)
         m = mb.addMenu("Exibir")
         self._act(m, "Alternar tema claro/escuro", self.alternar_tema)
+        m = mb.addMenu("Ajuda")
+        self._act(m, "Sobre", self.sobre)
 
     def _act(self, menu, texto, fn):
         a = QAction(texto, self)
@@ -125,26 +130,30 @@ class MainWindow(QMainWindow):
         ReuniaoDialog(self.db, self.curso_id, self.curso_nome, rid, self, data).exec()
         self.refresh_all()
 
+    def relatorio(self):
+        RelatorioDialog(self.db, self.curso_id, self).exec()
+
+    def dados_curso(self):
+        CursoDadosDialog(self.db, self.curso_id, self).exec()
+        self.atualiza_cabecalho()
+        self.refresh_all()
+
     # ---- backup / tema
-    def exportar(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar backup", f"backup_colegiado_{dt.datetime.now():%Y%m%d_%H%M}.json",
-                                              "Backup (*.json)")
+    def exportar(self, so_curso):
+        if so_curso:
+            slug = re.sub(r"\W+", "_", self.curso_nome).strip("_")
+            nome = f"curso_{slug}_{dt.date.today():%Y%m%d}.zip"
+        else:
+            nome = f"backup_completo_{dt.datetime.now():%Y%m%d_%H%M}.zip"
+        path, _ = QFileDialog.getSaveFileName(self, "Exportar backup", nome, "Backup (*.zip)")
         if path:
-            self.db.export_json(path)
-            self.db.log("Backup exportado", path)
-            aviso(self, "Backup salvo com sucesso.", "Pronto")
+            self.db.export_backup(path, self.curso_id if so_curso else None)
+            self.db.log("Backup exportado" + (" (curso)" if so_curso else " (completo)"), path)
+            aviso(self, "Backup salvo com sucesso (dados e documentos anexos).", "Pronto")
 
     def importar(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Importar backup", "", "Backup (*.json)")
-        if not path or not confirm(self, "Importar substitui TODOS os dados atuais pelos do arquivo "
-                                         "(uma cópia dos dados atuais é guardada antes). Continuar?"):
-            return
-        try:
-            self.db.import_json(path)
-        except Exception as e:
-            return aviso(self, f"Não foi possível importar: {e}", "Erro")
-        aviso(self, "Backup importado. Escolha o curso novamente.", "Pronto")
-        self._trocar()
+        if importar_backup_ui(self, self.db):
+            self._trocar()
 
     def alternar_tema(self):
         novo = "claro" if theme.P["nome"] == "escuro" else "escuro"
@@ -153,6 +162,9 @@ class MainWindow(QMainWindow):
         QApplication.instance().setStyleSheet(theme.qss())
         self.refresh_all()
 
+    def sobre(self):
+        aviso(self, f"{APP_NOME}\nVersão {VERSAO}\n\nDesenvolvido por {AUTOR}.", "Sobre")
+
     def historico(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Histórico de alterações")
@@ -160,7 +172,6 @@ class MainWindow(QMainWindow):
         t = QTableWidget(0, 3)
         t.setHorizontalHeaderLabels(["Quando", "Ação", "Detalhe"])
         t.verticalHeader().hide()
-        t.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         for r in self.db.historico():
             i = t.rowCount()
             t.insertRow(i)
@@ -184,16 +195,25 @@ class MainWindow(QMainWindow):
         rows = [d for d in self.db.demandas(self.curso_id) if d["prazo"]]
         atras = [d for d in rows if parse(d["prazo"]) < hoje]
         prox = [d for d in rows if hoje <= parse(d["prazo"]) <= hoje + dt.timedelta(days=7)]
-        if not atras and not prox:
-            return
-        linhas = []
+        passadas = self.db.reunioes_sem_situacao(self.curso_id)
+        mandatos = self.db.membros_mandato(self.curso_id, 30)
+        blocos = []
         if atras:
-            linhas.append(f"{len(atras)} demanda(s) ATRASADA(S):")
-            linhas += [f"  • {d['titulo']} (prazo {br(d['prazo'])})" for d in atras[:6]]
+            blocos.append([f"{len(atras)} demanda(s) ATRASADA(S):"] +
+                          [f"  • {d['titulo']} (prazo {br(d['prazo'])})" for d in atras[:6]])
         if prox:
-            linhas.append(f"\n{len(prox)} vencendo nos próximos 7 dias:")
-            linhas += [f"  • {d['titulo']} (prazo {br(d['prazo'])})" for d in prox[:6]]
-        aviso(self, "\n".join(linhas), "Resumo de hoje")
+            blocos.append([f"{len(prox)} vencendo nos próximos 7 dias:"] +
+                          [f"  • {d['titulo']} (prazo {br(d['prazo'])})" for d in prox[:6]])
+        if passadas:
+            blocos.append([f"{len(passadas)} reunião(ões) já passou(aram) e ainda está(ão) como \"Agendada\" "
+                           "(atualize a situação para Realizada ou Cancelada):"] +
+                          [f"  • {br(r['data'])} – {r['tipo']}" for r in passadas[:6]])
+        if mandatos:
+            blocos.append(["Mandatos vencidos ou vencendo em até 30 dias:"] +
+                          [f"  • {p['nome']} – {'terminou' if p['mandato_fim'] < hoje.isoformat() else 'termina'} "
+                           f"em {br(p['mandato_fim'])}" for p in mandatos[:6]])
+        if blocos:
+            aviso(self, "\n\n".join("\n".join(b) for b in blocos), "Resumo de hoje")
 
     def closeEvent(self, e):
         try:

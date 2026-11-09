@@ -1,16 +1,17 @@
 """Janelas de cadastro."""
 import datetime as dt
-import os
+import shutil
 
 from PySide6.QtCore import QDate, QTime, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QFileDialog,
-                               QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
+                               QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QMessageBox, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
                                QTabWidget, QTextEdit, QTimeEdit, QVBoxLayout, QWidget)
 
 from . import reports, theme
-from .db import PRIORIDADES, RECORRENCIAS, STATUS, br, parse
+from .db import PRIORIDADES, RECORRENCIAS, STATUS, add_months, br, parse
+from .info import AUTOR
 
 UR = Qt.ItemDataRole.UserRole
 CHK, UNC = Qt.CheckState.Checked, Qt.CheckState.Unchecked
@@ -33,6 +34,51 @@ def aviso(parent, texto, titulo="Atenção"):
 
 def abrir_arquivo(path):
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+
+def pedir_texto(parent, titulo, label, valor=""):
+    d = QInputDialog(parent)
+    d.setWindowTitle(titulo)
+    d.setLabelText(label)
+    d.setTextValue(valor)
+    d.setOkButtonText("OK")
+    d.setCancelButtonText("Cancelar")
+    d.resize(520, 150)
+    return d.textValue().strip() if d.exec() else None
+
+
+def tamanho_fmt(n):
+    n = n or 0
+    return f"{n / 1024:.0f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.1f} MB"
+
+
+def importar_backup_ui(parent, db):
+    """Importa backup completo (substitui tudo) ou de um curso (acrescenta/substitui). Devolve True se importou."""
+    path, _ = QFileDialog.getOpenFileName(parent, "Importar backup", "", "Backup (*.zip *.json)")
+    if not path:
+        return False
+    try:
+        data = db.ler_backup(path)
+        if data["escopo"] == "curso":
+            nome = data["tabelas"]["curso"][0]["nome"]
+            subst = False
+            if db.one("SELECT id FROM curso WHERE nome=?", (nome,)):
+                if not confirm(parent, f"O curso \"{nome}\" já existe neste computador. Substituir os dados dele pelos do "
+                                       "arquivo? (Uma cópia de segurança é guardada antes.)"):
+                    return False
+                subst = True
+            db.import_curso(path, subst)
+            aviso(parent, f"Curso \"{nome}\" importado com sucesso, com reuniões, demandas e documentos anexos.", "Pronto")
+        else:
+            if not confirm(parent, "Este é um backup COMPLETO: ele substitui TODOS os dados deste computador pelos do arquivo "
+                                   "(uma cópia dos dados atuais é guardada antes). Continuar?"):
+                return False
+            db.import_tudo(path)
+            aviso(parent, "Backup importado com sucesso.", "Pronto")
+        return True
+    except Exception as e:
+        aviso(parent, f"Não foi possível importar: {e}", "Erro")
+        return False
 
 
 def to_qdate(s):
@@ -105,65 +151,168 @@ def marcados(lw):
 
 
 # ---------------------------------------------------------------- curso
+class CursoDadosDialog(QDialog):
+    def __init__(self, db, cid, parent=None, novo=False):
+        super().__init__(parent)
+        self.db, self.cid = db, cid
+        c = db.curso(cid)
+        self.setWindowTitle("Dados do curso")
+        self.setMinimumWidth(520)
+        self.nome = QLineEdit(c["nome"])
+        self.trat = QComboBox()
+        self.trat.addItems(["Coordenador", "Coordenadora"])
+        self.trat.setCurrentText(c.get("tratamento") or "Coordenador")
+        self.coord = QLineEdit(c.get("coordenador") or "")
+        self.coord.setPlaceholderText("Nome completo do(a) coordenador(a) do curso")
+        f = QFormLayout()
+        f.addRow("Nome do curso*", self.nome)
+        f.addRow("Tratamento", self.trat)
+        f.addRow("Coordenador(a)", self.coord)
+        v = QVBoxLayout(self)
+        if novo:
+            v.addWidget(QLabel("Curso criado! Informe quem coordena o curso (aparece na ata e no relatório; "
+                               "pode ser alterado depois)."))
+        v.addLayout(f)
+        v.addLayout(botoes(self))
+
+    def accept(self):
+        nome = self.nome.text().strip()
+        if not nome:
+            return aviso(self, "Informe o nome do curso.")
+        outro = self.db.one("SELECT id FROM curso WHERE nome=? AND id!=?", (nome, self.cid))
+        if outro:
+            return aviso(self, "Já existe outro curso com este nome.")
+        self.db.salvar_curso_dados(self.cid, nome, self.coord.text().strip(), self.trat.currentText())
+        super().accept()
+
+
 class CursoDialog(QDialog):
     def __init__(self, db):
         super().__init__()
         self.db = db
         self.nome = None
+        self.curso_id = None
         self.setWindowTitle("Colegiado – Controle de Demandas")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(600)
         v = QVBoxLayout(self)
-        v.setContentsMargins(28, 24, 28, 20)
+        v.setContentsMargins(28, 24, 28, 18)
         v.setSpacing(10)
         topo = QHBoxLayout()
         logo = QLabel()
         logo.setPixmap(QPixmap(theme.asset("logo.png")).scaled(56, 56, Qt.AspectRatioMode.KeepAspectRatio,
                                                                Qt.TransformationMode.SmoothTransformation))
         t = QLabel("Controle de Demandas do Colegiado")
-        t.setStyleSheet("font-family:Georgia,serif; font-size:18pt;")
+        t.setStyleSheet("font-family:Georgia,serif; font-size:16pt;")
+        t.setWordWrap(True)
         topo.addWidget(logo)
         topo.addWidget(t, 1)
         v.addLayout(topo)
-        resp = QLabel(f"Coordenação: {self.db.coordenador()}")
-        resp.setStyleSheet(f"color:{theme.P['muted']};")
-        v.addWidget(resp)
-        v.addWidget(QLabel("Qual é o curso de graduação? Escolha um já cadastrado ou digite um novo nome."))
-        self.combo = QComboBox()
-        self.combo.setEditable(True)
-        self.combo.lineEdit().setPlaceholderText("Ex.: Engenharia Civil")
-        v.addWidget(self.combo)
-        self.fill()
+        v.addWidget(QLabel("Selecione o curso:"))
+        self.lista = QListWidget()
+        self.lista.setMinimumHeight(150)
+        self.lista.itemDoubleClicked.connect(lambda *_: self.entrar())
+        v.addWidget(self.lista)
+        self.vazio = QLabel("Nenhum curso cadastrado ainda. Crie o primeiro abaixo ou importe um backup.")
+        self.vazio.setWordWrap(True)
+        v.addWidget(self.vazio)
+        row = QHBoxLayout()
+        self.b_entrar = QPushButton("Entrar")
+        self.b_entrar.setProperty("primary", True)
+        self.b_entrar.clicked.connect(self.entrar)
+        self.b_dados = QPushButton("Dados do curso…")
+        self.b_dados.clicked.connect(self.dados)
+        self.b_excluir = QPushButton("Excluir curso")
+        self.b_excluir.setProperty("danger", True)
+        self.b_excluir.clicked.connect(self.excluir)
+        for b in (self.b_entrar, self.b_dados):
+            row.addWidget(b)
+        row.addStretch()
+        row.addWidget(self.b_excluir)
+        v.addLayout(row)
+        v.addWidget(QLabel("Novo curso:"))
+        row = QHBoxLayout()
+        self.novo = QLineEdit()
+        self.novo.setPlaceholderText("Ex.: Engenharia Civil")
+        self.novo.returnPressed.connect(self.criar)
+        b = QPushButton("Criar curso")
+        b.clicked.connect(self.criar)
+        row.addWidget(self.novo, 1)
+        row.addWidget(b)
+        v.addLayout(row)
+        rod = QHBoxLayout()
         imp = QPushButton("Importar backup…")
         imp.clicked.connect(self.importar)
-        v.addLayout(botoes(self, "Entrar", [imp]))
+        autor = QLabel(f"Desenvolvido por {AUTOR}")
+        autor.setStyleSheet(f"color:{theme.P['muted']}; font-size:8pt;")
+        rod.addWidget(imp)
+        rod.addStretch()
+        rod.addWidget(autor)
+        v.addLayout(rod)
+        self.fill()
 
-    def fill(self):
-        self.combo.clear()
-        for c in self.db.cursos():
-            self.combo.addItem(c["nome"])
-        if not self.db.cursos():
-            self.combo.setCurrentText("")
+    def fill(self, selecionar=None):
+        self.lista.clear()
+        cursos = self.db.cursos()
+        alvo = selecionar or self.db.cfg("ultimo_curso")
+        for c in cursos:
+            it = QListWidgetItem(c["nome"])
+            it.setData(UR, c["id"])
+            self.lista.addItem(it)
+            if c["nome"] == alvo:
+                self.lista.setCurrentItem(it)
+        if cursos and not self.lista.currentItem():
+            self.lista.setCurrentRow(0)
+        for w in (self.lista, self.b_entrar, self.b_dados, self.b_excluir):
+            w.setEnabled(bool(cursos))
+        self.vazio.setVisible(not cursos)
+        self.lista.setVisible(bool(cursos))
+
+    def _sel(self):
+        it = self.lista.currentItem()
+        return (it.data(UR), it.text()) if it else (None, None)
+
+    def entrar(self, cid=None):
+        cid = cid or self._sel()[0]
+        if not cid:
+            return aviso(self, "Selecione um curso na lista.")
+        self.curso_id, self.nome = cid, self.db.curso(cid)["nome"]
+        self.db.set_cfg("ultimo_curso", self.nome)
+        self.accept()
+
+    def dados(self):
+        cid, _ = self._sel()
+        if cid:
+            CursoDadosDialog(self.db, cid, self).exec()
+            self.fill(self.db.curso(cid)["nome"])
+
+    def criar(self):
+        nome = self.novo.text().strip()
+        if not nome:
+            return aviso(self, "Digite o nome do novo curso.")
+        if self.db.one("SELECT id FROM curso WHERE nome=?", (nome,)):
+            return aviso(self, "Já existe um curso com este nome.")
+        cid = self.db.criar_curso(nome)
+        CursoDadosDialog(self.db, cid, self, novo=True).exec()
+        self.entrar(cid)
+
+    def excluir(self):
+        cid, nome = self._sel()
+        if not cid:
+            return
+        txt = pedir_texto(self, "Excluir curso",
+                          "Isto apaga TODOS os dados deste curso: pessoas, reuniões, pautas, demandas e documentos anexos.\n"
+                          "Uma cópia de segurança é guardada antes.\n\nPara confirmar, digite o nome do curso:\n" + nome)
+        if txt is None:
+            return
+        if txt != nome:
+            return aviso(self, "O nome digitado não confere. Nada foi excluído.")
+        self.db.excluir_curso(cid)
+        self.fill()
+        aviso(self, f"Curso \"{nome}\" excluído. Uma cópia de segurança ficou na pasta de backups.", "Pronto")
 
     def importar(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Importar backup", "", "Backup (*.json)")
-        if not path:
-            return
-        if not confirm(self, "Importar substitui todos os dados atuais pelos do arquivo (uma cópia dos dados atuais é guardada antes). Continuar?"):
-            return
-        try:
-            self.db.import_json(path)
-            aviso(self, "Backup importado com sucesso.", "Pronto")
+        if importar_backup_ui(self, self.db):
             self.fill()
-        except Exception as e:
-            aviso(self, f"Não foi possível importar: {e}", "Erro")
-
-    def accept(self):
-        nome = self.combo.currentText().strip()
-        if not nome:
-            return aviso(self, "Informe o nome do curso.")
-        self.nome = nome
-        self.curso_id = self.db.curso_id(nome)
-        super().accept()
 
 
 # ---------------------------------------------------------------- pessoa
@@ -281,6 +430,8 @@ class DemandaDialog(QDialog):
         for r in db.reunioes(curso):
             self.reun.addItem(f"{br(r['data'])} – {r['tipo']}", r["id"])
         self.reun.setCurrentIndex(max(0, self.reun.findData(rid)))
+        self.sei = QLineEdit(d.get("sei") or "")
+        self.sei.setPlaceholderText("Opcional – nº do processo SEI ou do ofício")
         self.coord = QCheckBox("Coordenação do curso")
         self.coord.setChecked(bool(d.get("coord")))
         self.resp = checklist([(f"{p['nome']}  ({p['categoria']})", p["id"]) for p in db.pessoas(curso, ativos=True)],
@@ -310,6 +461,7 @@ class DemandaDialog(QDialog):
             row.addWidget(w)
         f.addRow(row)
         f.addRow("Reunião de origem", self.reun)
+        f.addRow("Nº SEI / ofício", self.sei)
         cols = QHBoxLayout()
         a, c = QVBoxLayout(), QVBoxLayout()
         a.addWidget(QLabel("Responsáveis"))
@@ -375,7 +527,7 @@ class DemandaDialog(QDialog):
         d = dict(titulo=self.titulo.text().strip(), descricao=self.desc.toPlainText().strip(), prazo=dstr(self.prazo),
                  prioridade=self.prio.currentText(), status=self.status.currentText(),
                  reuniao_id=self.reun.currentData(), coord=int(self.coord.isChecked()),
-                 recorrencia="" if rec == "Nenhuma" else rec)
+                 recorrencia="" if rec == "Nenhuma" else rec, sei=self.sei.text().strip())
         pautas = (self.sel_pautas - self._visiveis()) | set(marcados(self.pautas))
         self.db.salvar_demanda(self.curso, d, marcados(self.resp), sorted(pautas), self.did, self.novos)
         super().accept()
@@ -398,6 +550,13 @@ class ReuniaoDialog(QDialog):
         self.hora = QTimeEdit(QTime.fromString(r.get("hora", "14:00"), "HH:mm"))
         self.hora.setDisplayFormat("HH:mm")
         self.local = QLineEdit(r.get("local") or "")
+        self.numero = QSpinBox()
+        self.numero.setRange(0, 9999)
+        self.numero.setSpecialValueText("—")
+        ano = data.year if hasattr(data, "year") else dt.date.today().year
+        self.numero.setValue(r["numero"] if r.get("numero") else (0 if rid else db.proximo_numero(curso, ano)))
+        self.sei = QLineEdit(r.get("sei_convocacao") or "")
+        self.sei.setPlaceholderText("Opcional – ex.: 23000.000000/2026-00")
         self.status = QComboBox()
         self.status.addItems(["Agendada", "Realizada", "Cancelada"])
         self.status.setCurrentText(r.get("status", "Agendada"))
@@ -406,7 +565,8 @@ class ReuniaoDialog(QDialog):
         w = QWidget()
         f = QFormLayout(w)
         for lbl, x in (("Tipo", self.tipo), ("Data", self.data), ("Horário", self.hora), ("Local", self.local),
-                       ("Situação", self.status), ("Observações (constam na ata)", self.obs)):
+                       ("Nº da ata (editável; — = sem número)", self.numero),
+                       ("Nº do processo SEI da convocação", self.sei), ("Situação", self.status), ("Observações (constam na ata)", self.obs)):
             f.addRow(lbl, x)
         tabs.addTab(w, "Dados")
         # pauta
@@ -453,10 +613,30 @@ class ReuniaoDialog(QDialog):
         v = QVBoxLayout(w)
         v.addWidget(QLabel("Marque os membros presentes:" if membros else "Cadastre membros do Colegiado em Pessoas."))
         v.addWidget(self.lp)
+        self.lblq = QLabel()
+        v.addWidget(self.lblq)
+        self.lp.itemChanged.connect(self.atualizar_quorum)
         b = QPushButton("Marcar / desmarcar todos")
         b.clicked.connect(self.todos)
         v.addWidget(b, 0, Qt.AlignmentFlag.AlignLeft)
         tabs.addTab(w, "Presença")
+        # anexos
+        self.la = QListWidget()
+        self.la.itemDoubleClicked.connect(lambda *_: self.abrir_anexo())
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.addWidget(QLabel("Documentos desta reunião (ex.: minuta de instrução normativa, ofícios). "
+                           "Ficam guardados no programa e vão junto no backup."))
+        v.addWidget(self.la)
+        h = QHBoxLayout()
+        for txt, fn in (("+ Adicionar documento…", self.add_anexo), ("Abrir", self.abrir_anexo),
+                        ("Salvar cópia…", self.copiar_anexo), ("Remover", self.rem_anexo)):
+            b = QPushButton(txt)
+            b.clicked.connect(fn)
+            h.addWidget(b)
+        h.addStretch()
+        v.addLayout(h)
+        tabs.addTab(w, "Anexos")
 
         ata = QPushButton("Gerar ata (Word)")
         ata.clicked.connect(self.gerar_ata)
@@ -468,6 +648,8 @@ class ReuniaoDialog(QDialog):
         lay.addLayout(botoes(self, extra=[ata, exc]))
         self.load_pautas()
         self.load_demandas()
+        self.load_anexos()
+        self.atualizar_quorum()
 
     # pauta
     def add_pauta(self, pid, titulo, delib):
@@ -547,13 +729,66 @@ class ReuniaoDialog(QDialog):
         for i in range(self.lp.count()):
             self.lp.item(i).setCheckState(novo)
 
+    # quórum
+    def atualizar_quorum(self, *_):
+        n = self.lp.count()
+        if not n:
+            self.lblq.setText("")
+            return
+        x = sum(self.lp.item(i).checkState() == CHK for i in range(n))
+        q = n // 2 + 1
+        ok = x >= q
+        self.lblq.setText(f"Presentes: {x} de {n} membros · quórum de maioria: {q} · {'atingido' if ok else 'NÃO atingido'}")
+        self.lblq.setStyleSheet(f"color:{theme.P['ok' if ok else 'late']}; font-weight:600;")
+
+    # anexos
+    def load_anexos(self):
+        self.la.clear()
+        if not self.rid:
+            return
+        for a in self.db.anexos(self.rid):
+            it = QListWidgetItem(f"{a['nome']}   ({tamanho_fmt(a['tamanho'])}) – adicionado em {br(a['adicionado_em'])}")
+            it.setData(UR, a["id"])
+            self.la.addItem(it)
+
+    def _anexo(self):
+        it = self.la.currentItem()
+        return self.db.one("SELECT * FROM anexo WHERE id=?", (it.data(UR),)) if it else None
+
+    def add_anexo(self):
+        if not self._save():
+            return
+        arquivos, _ = QFileDialog.getOpenFileNames(self, "Adicionar documentos", "", "Todos os arquivos (*.*)")
+        for f in arquivos:
+            self.db.anexar(self.rid, f)
+        self.load_anexos()
+
+    def abrir_anexo(self):
+        a = self._anexo()
+        if a:
+            abrir_arquivo(self.db.caminho_anexo(a))
+
+    def copiar_anexo(self):
+        a = self._anexo()
+        if a:
+            path, _ = QFileDialog.getSaveFileName(self, "Salvar cópia do documento", a["nome"])
+            if path:
+                shutil.copy2(self.db.caminho_anexo(a), path)
+
+    def rem_anexo(self):
+        a = self._anexo()
+        if a and confirm(self, f"Remover o documento \"{a['nome']}\" desta reunião?"):
+            self.db.remover_anexo(a["id"])
+            self.load_anexos()
+
     # salvar
     def _save(self):
         if not self.local.text().strip():
             aviso(self, "Informe o local da reunião (aba Dados).")
             return False
         d = dict(tipo=self.tipo.currentText(), data=dstr(self.data), hora=self.hora.time().toString("HH:mm"),
-                 local=self.local.text().strip(), status=self.status.currentText(), obs=self.obs.toPlainText().strip())
+                 local=self.local.text().strip(), status=self.status.currentText(), obs=self.obs.toPlainText().strip(),
+                 numero=self.numero.value() or None, sei_convocacao=self.sei.text().strip())
         pautas = [self._row(r) for r in range(self.tp.rowCount()) if self._row(r)[1].strip()]
         pres = {self.lp.item(i).data(UR): self.lp.item(i).checkState() == CHK for i in range(self.lp.count())}
         self.rid = self.db.salvar_reuniao(self.curso, d, pautas, pres, self.rid)
@@ -580,3 +815,82 @@ class ReuniaoDialog(QDialog):
     def accept(self):
         if self._save():
             super().accept()
+
+
+# ---------------------------------------------------------------- relatório
+class RelatorioDialog(QDialog):
+    def __init__(self, db, curso, parent=None):
+        super().__init__(parent)
+        self.db, self.curso = db, curso
+        self.setWindowTitle("Relatório do período (PDF)")
+        self.setMinimumWidth(540)
+        self.atalho = QComboBox()
+        self.atalho.addItems(["Mês atual", "Mês anterior", "Semestre atual", "Semestre anterior", "Ano atual", "Personalizado"])
+        self.ini, self.fim = date_edit(), date_edit()
+        self.atalho.currentIndexChanged.connect(self.aplicar)
+        self.ini.dateChanged.connect(self.personalizado)
+        self.fim.dateChanged.connect(self.personalizado)
+        f = QFormLayout()
+        f.addRow("Período", self.atalho)
+        f.addRow("De", self.ini)
+        f.addRow("Até", self.fim)
+        self.opts = {}
+        v = QVBoxLayout(self)
+        v.addLayout(f)
+        v.addWidget(QLabel("<b>O relatório sempre traz o resumo e a lista de reuniões. Incluir também:</b>"))
+        for k, txt in (("detalhar", "Pontos de pauta, deliberações e demandas de cada reunião"),
+                       ("concluidas", "Demandas concluídas no período"),
+                       ("abertas", "Demandas em aberto (atrasadas em destaque)"),
+                       ("pendencias", "Pendências por responsável"),
+                       ("presenca", "Controle de presença nas reuniões realizadas")):
+            cb = QCheckBox(txt)
+            cb.setChecked(True)
+            self.opts[k] = cb
+            v.addWidget(cb)
+        v.addLayout(botoes(self, "Gerar PDF"))
+        self.aplicar()
+
+    def personalizado(self):
+        self.atalho.blockSignals(True)
+        self.atalho.setCurrentIndex(5)
+        self.atalho.blockSignals(False)
+
+    def aplicar(self):
+        h, i = dt.date.today(), self.atalho.currentIndex()
+        if i == 0:
+            a = h.replace(day=1)
+            b = add_months(a, 1) - dt.timedelta(days=1)
+        elif i == 1:
+            a = add_months(h.replace(day=1), -1)
+            b = h.replace(day=1) - dt.timedelta(days=1)
+        elif i in (2, 3):
+            sem, ano = (0 if h.month <= 6 else 1), h.year
+            if i == 3:
+                sem -= 1
+                if sem < 0:
+                    sem, ano = 1, ano - 1
+            a = dt.date(ano, 1 if sem == 0 else 7, 1)
+            b = dt.date(ano, 6, 30) if sem == 0 else dt.date(ano, 12, 31)
+        elif i == 4:
+            a, b = dt.date(h.year, 1, 1), dt.date(h.year, 12, 31)
+        else:
+            return
+        for w, d in ((self.ini, a), (self.fim, b)):
+            w.blockSignals(True)
+            w.setDate(to_qdate(d))
+            w.blockSignals(False)
+
+    def accept(self):
+        ini, fim = dstr(self.ini), dstr(self.fim)
+        if ini > fim:
+            return aviso(self, "A data inicial deve ser anterior à final.")
+        path, _ = QFileDialog.getSaveFileName(self, "Salvar relatório", f"Relatorio_{ini}_a_{fim}.pdf", "PDF (*.pdf)")
+        if not path:
+            return
+        try:
+            reports.gerar_relatorio_pdf(self.db, self.curso, ini, fim, path, {k: c.isChecked() for k, c in self.opts.items()})
+        except Exception as e:
+            return aviso(self, f"Não foi possível gerar o relatório: {e}", "Erro")
+        self.db.log("Relatório PDF gerado", f"{br(ini)} a {br(fim)}")
+        abrir_arquivo(path)
+        super().accept()

@@ -4,9 +4,10 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QSplashScreen
 
 from . import theme
+from .info import AUTOR, VERSAO
 
 
-def criar_splash(coordenador):
+def criar_splash():
     p, w, h = theme.P, 560, 340
     pm = QPixmap(w, h)
     pm.fill(QColor(p["bg"]))
@@ -28,10 +29,10 @@ def criar_splash(coordenador):
     q.drawLine(w // 2 - 30, 232, w // 2 + 30, 232)
     q.setPen(QColor(p["text"]))
     q.setFont(QFont("Segoe UI", 10))
-    q.drawText(QRectF(0, 248, w, 24), centro, f"Coordenador: {coordenador}")
+    q.drawText(QRectF(0, 248, w, 24), centro, f"Desenvolvido por {AUTOR}")
     q.setPen(QColor(p["muted"]))
     q.setFont(QFont("Segoe UI", 9))
-    q.drawText(QRectF(0, 296, w, 22), centro, "Carregando…")
+    q.drawText(QRectF(0, 296, w, 22), centro, f"Versão {VERSAO} · Carregando…")
     q.end()
     s = QSplashScreen(pm)
     s.show()
