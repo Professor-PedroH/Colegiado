@@ -4,10 +4,13 @@ import traceback
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from PySide6.QtGui import QIcon
+
 from app import theme
 from app.db import DB, data_dir
 from app.dialogs import CursoDialog
 from app.main_window import MainWindow
+from app.splash import aguardar, criar_splash
 
 
 def _hook(tipo, valor, tb):
@@ -26,8 +29,15 @@ def main():
     db = DB()
     theme.set_theme(db.cfg("tema", "claro"))
     app.setStyleSheet(theme.qss())
+    app.setWindowIcon(QIcon(theme.asset("icon.ico")))
+    splash = criar_splash(db.coordenador())
+    aguardar(1500)
+    first = True
     while True:
         dlg = CursoDialog(db)
+        if first:
+            splash.finish(dlg)
+            first = False
         if not dlg.exec():
             break
         win = MainWindow(db, dlg.curso_id, dlg.nome)

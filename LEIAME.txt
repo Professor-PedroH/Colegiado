@@ -18,3 +18,8 @@ ONDE FICAM OS DADOS
 - Menu Backup > Exportar/Importar: arquivo .json com todos os dados e o log.
   Tambem ha "Importar backup" na tela inicial (escolha do curso).
   Dica: deixe a pasta Documentos sincronizada (OneDrive) para ter copia na nuvem.
+
+LOGO
+- Para usar a logo da sua instituicao, substitua assets\logo.png (PNG quadrado, ex.: 512x512)
+  e assets\icon.ico (icone do programa; gere em um conversor de PNG para ICO) e refaca o build.
+- O nome do coordenador pode ser alterado em Arquivo > Alterar nome do coordenador.

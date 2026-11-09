@@ -6,6 +6,7 @@ DefaultDirName={autopf}\ColegiadoDemandas
 DefaultGroupName=Colegiado - Controle de Demandas
 OutputDir=installer
 OutputBaseFilename=Instalador_ColegiadoDemandas
+SetupIconFile=assets\icon.ico
 Compression=lzma
 SolidCompression=yes
 [Languages]
